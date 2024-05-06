@@ -1,5 +1,6 @@
 use std::fs;
 
+const MAX_CACHE_SIZE: usize = 10000;
 const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -65,8 +66,8 @@ impl Encoder {
     }
 
     fn generate_next_states(&self, state: &State) -> Vec<State> {
-        let mut next_states = Vec::new();
-
+        // initial state with vector fixed size of 1000000
+        let mut next_states = Vec::with_capacity(MAX_CACHE_SIZE * 2);
         for char in &self.possible_chars {
             let current_pair = &self.target_hex_pairs[state.current_pair_index];
             let current_hash = create_hash(state.start as f64, *char as u32, current_pair.len());
@@ -225,7 +226,7 @@ fn main() {
     let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>();
 
     let initial_state = State::new(2.0, 0, 0, vec![]);
-    let mut encoder = Encoder::new(initial_state, target_hex, target_hex_pairs, 10000);
+    let mut encoder = Encoder::new(initial_state, target_hex, target_hex_pairs, MAX_CACHE_SIZE);
 
     if let Some(result) = encoder.encode() {
         println!("Encoding Complete:");
