@@ -144,7 +144,6 @@ function get_hex_digit(x, d)
             completed = true;
             console.log('Completed')
 
-            this.test(state.history.join(''))
             return state; // This is the optimal solution
           }
         }
@@ -154,29 +153,6 @@ function get_hex_digit(x, d)
       }
   
       return null;
-    }
-
-    test(state) {
-        let errors = 0
-        let w=''
-        let i=0
-        let e=2
-        const y = INDEX
-        for(;e+=hash(e,state.charCodeAt(i/2));i++) {
-            w+=e.toString(16)[y]
-    
-            if(e.toString(16)[y] === undefined) {
-                // console.log(i/2|0, state.charCodeAt(i/2) , 'undefined', 'e:', e, 'w:', e.toString(16)[y], 'm:', this.targetHex[i-2])  // Debugging output
-                errors++
-            }
-            
-            if ((this.targetHex[i-2] && e.toString(16)[y]) != this.targetHex[i-2] ) {
-                // console.log(i/2|0, state.charCodeAt(i/2), 'Not matching', 'e:', e, 'w:', e.toString(16)[y], 'm:', this.targetHex[i-2])  // Debugging output
-                errors++
-            }
-        }
-
-        console.log('Equals:', w === this.targetHex)
     }
   }
   
