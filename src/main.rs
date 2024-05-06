@@ -1,6 +1,7 @@
 use std::fs;
 
-const MAX_CACHE_SIZE: usize = 10000;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(4) as usize;
+// const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -66,7 +67,6 @@ impl Encoder {
     }
 
     fn generate_next_states(&self, state: &State) -> Vec<State> {
-        // initial state with vector fixed size of 1000000
         let mut next_states = Vec::with_capacity(MAX_CACHE_SIZE * 2);
         for char in &self.possible_chars {
             let current_pair = &self.target_hex_pairs[state.current_pair_index];
@@ -115,13 +115,22 @@ impl Encoder {
         let mut completed = false;
         let mut counter = 0;
         while !completed {
-            for state in &self.old_cache {
-                let next_states = self.generate_next_states(state);
 
-                for s in next_states {
-                    self.new_cache.push(s);
-                }
-            }
+            // do it all in parallel
+
+            // for state in &self.old_cache {
+            //     let next_states = self.generate_next_states(state);
+
+            //     for s in next_states {
+            //         self.new_cache.push(s);
+            //     }
+            // }
+            use rayon::prelude::*;
+
+            self.new_cache = self.old_cache.par_iter().flat_map(|state| {
+                self.generate_next_states(state)
+            }).collect();
+
             counter += 1;
             println!("{} of {} - {}", counter, self.target_hex_pairs.len(), self.new_cache.len());
 
