@@ -1,11 +1,16 @@
 use std::fs;
+use chrono;
 
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(4) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(2) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
+
+fn hash(store: f64, value: u32) -> f64 {
+    store.powf(0.1) * (value as f64)
+}
 #[derive(Clone, PartialEq)]
 struct State {
     start: f64,
@@ -168,10 +173,6 @@ fn is_valid_char(x: i32) -> bool {
     }
 }
 
-fn hash(store: f64, value: u32) -> f64 {
-    store / (value as f64)
-}
-
 fn get_hex_digit(x: f64, d: usize) -> char {
     // get dth digit of x in base 16 
     let x = x as f64;
@@ -221,7 +222,7 @@ fn check_condition(
 ) -> bool {
     for (i, expected) in pair.chars().enumerate() {
         let sum: f64 = hash_values.iter().take(i + 1).sum();
-        let hex_digit = get_hex_digit(start + sum, y.try_into().unwrap());
+        let hex_digit = get_hex_digit(sum, y.try_into().unwrap());
         if hex_digit != expected {
             return false;
         }
@@ -241,9 +242,9 @@ fn main() {
         println!("Encoding Complete:");
         println!("Encoded Sequence: {}", result.history.iter().collect::<String>());
         println!("Byte Count: {}", result.byte_count);
-
+        let timestamp = chrono::Utc::now().timestamp();
         fs::write(
-            "a.txt",
+            format!("{}.txt", timestamp),
             format!(
                 "for(w='f',i=0,e=2;e+=e/`{}`.charCodeAt(i++/2);)w+=e.toString(16)[{}]",
                 result.history.iter().collect::<String>(),
