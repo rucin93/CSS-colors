@@ -1,7 +1,7 @@
 use std::fs;
 use chrono;
 
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(2) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
@@ -9,8 +9,22 @@ const BASE_16: &[char; 16] = &[
 ];
 
 fn hash(store: f64, value: u32) -> f64 {
-    store.powf(0.1) * (value as f64)
+    store.powf(0.2) * (value as f64)
 }
+
+fn get_max_size(iterations: usize, percent: u32) -> usize {
+    let mut size = 1;
+    for _ in 0..iterations {
+        size *= 3;
+    }
+
+    if size > 508 {
+       return 508;
+    }
+
+    return (size * percent / 100) as usize;
+}
+
 #[derive(Clone, PartialEq)]
 struct State {
     start: f64,
@@ -38,6 +52,7 @@ struct Encoder {
     old_cache: Vec<State>,
     new_cache: Vec<State>,
     possible_chars: Vec<char>,
+    max_sizes: Vec<usize>,
 }
 
 impl Encoder {
@@ -60,6 +75,13 @@ impl Encoder {
 
         let clone = initial_state.clone();
 
+
+        // max sizes for each iteration
+        let mut max_sizes = Vec::new();
+        for i in 0..target_hex_pairs.len() + 10 {
+            max_sizes.push(get_max_size(i, 90));
+        }
+
         Encoder {
             initial_state,
             target_hex,
@@ -68,6 +90,7 @@ impl Encoder {
             old_cache: vec![clone],
             new_cache: Vec::new(),
             possible_chars,
+            max_sizes,
         }
     }
 
@@ -92,8 +115,9 @@ impl Encoder {
                     history: new_history,
                 };
 
-                if new_state.byte_count < 650 {
+                if new_state.byte_count <= self.max_sizes[new_state.current_pair_index] {
                     next_states.push(new_state);
+                    // next_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
                 }
 
                 // if next_states.len() > 10 {
@@ -108,7 +132,7 @@ impl Encoder {
 
     fn prune_cache(&mut self) {
         if self.new_cache.len() > self.cache_size {
-            println!("Pruning cache");
+            // println!("Pruning cache");
             let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
 
@@ -137,7 +161,7 @@ impl Encoder {
             }).collect();
 
             counter += 1;
-            println!("{} of {} - {}", counter, self.target_hex_pairs.len(), self.new_cache.len());
+            println!("{} {} of {} - {}", chrono::Utc::now().format("%d/%m/%Y %H:%M:%S"), counter, self.target_hex_pairs.len(), self.new_cache.len());
 
             self.prune_cache();
 
@@ -168,7 +192,7 @@ fn byte_size(string: &str) -> usize {
 
 fn is_valid_char(x: i32) -> bool {
     match x {
-        13 | 36 | 92 | 96 => false,
+        13 | 36 | 92 | 96 | 127 => false,
         _ => true,
     }
 }
@@ -222,7 +246,7 @@ fn check_condition(
 ) -> bool {
     for (i, expected) in pair.chars().enumerate() {
         let sum: f64 = hash_values.iter().take(i + 1).sum();
-        let hex_digit = get_hex_digit(sum, y.try_into().unwrap());
+        let hex_digit = get_hex_digit(start + sum, y.try_into().unwrap());
         if hex_digit != expected {
             return false;
         }
@@ -231,8 +255,11 @@ fn check_condition(
 }
 
 fn main() {
-    let target_hex = "0f8fffae".to_string();
-    // let target_hex = "0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd32".to_string();
+    // let target_hex = "0f8fffae".to_string();
+    let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
+    // reverse target_hex
+    let target_hex = target_hex.chars().rev().collect::<String>();
+    
     let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>();
 
     let initial_state = State::new(2.0, 0, 0, vec![]);
@@ -246,7 +273,7 @@ fn main() {
         fs::write(
             format!("{}.txt", timestamp),
             format!(
-                "for(w='f',i=e=2;e+=e**.1*`-{}`.charCodeAt(i++/2);)w+=e.toString(16)[{}]",
+                "for(w=i=e=2;e+=e**.3*`-{}`.charCodeAt(i++/2);)w=[e.toString(16)[{}]]+w;for(c of a=arguments)print('#'+w.substr(a.map(d=>s+=d<c,s=0)|s*6,6))",
                 result.history.iter().collect::<String>(),
                 INDEX
             ),
