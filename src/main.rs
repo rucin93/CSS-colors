@@ -246,7 +246,7 @@ fn main() {
         fs::write(
             format!("{}.txt", timestamp),
             format!(
-                "for(w='f',i=0,e=2;e+=e/`{}`.charCodeAt(i++/2);)w+=e.toString(16)[{}]",
+                "for(w='f',i=0,e=2;e+=e**.1*`{}`.charCodeAt(i++/2);)w+=e.toString(16)[{}]",
                 result.history.iter().collect::<String>(),
                 INDEX
             ),
