@@ -105,7 +105,8 @@ impl Encoder {
                     history: new_history,
                 };
 
-                if new_state.byte_count <= 510 { // too large
+                // only add when byte count is less than 510 - prune too big strings from output
+                if new_state.byte_count < 510 { 
                     next_states.push(new_state);
                 }
 
@@ -143,6 +144,7 @@ impl Encoder {
             //         self.new_cache.push(s);
             //     }
             // }
+
             use rayon::prelude::*;
 
             self.new_cache = self.old_cache.par_iter().flat_map(|state| {
@@ -170,21 +172,25 @@ impl Encoder {
 
 ////// UTILS
  
-
 fn byte_size(string: &str) -> usize {
     string.len()
 }
 
 fn is_valid_char(x: i32) -> bool {
+    // 13 - carriage return
+    // 36 - $
+    // 92 - \
+    // 96 - `
+    // 127 - delete
     match x {
         13 | 36 | 92 | 96 | 127 => false,
         _ => true,
     }
 }
 
-
+// get hex digit at dth position
 fn get_hex_digit(x: Float, d: usize) -> char {
-    // get dth digit of x in base 16 
+
     let x = x.clone();
     let d = Float::with_val(PRECISION, d);
 
@@ -214,6 +220,7 @@ fn get_hex_digit(x: Float, d: usize) -> char {
     }
 }
 
+// create two hash values for each pair to check if the condition is satisfied
 fn create_hash(start: Float, x: u32, size: usize) -> Vec<Float> {
     let start_copy = start.clone();
     let mut hash_values: Vec<Float> = vec![hash(start_copy, x)];
@@ -235,6 +242,7 @@ fn check_condition(
         return false;
     }
 
+    // handle when there is single character in pair
     if pair.len() == 1 {
         return true;
     }
