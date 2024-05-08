@@ -2,17 +2,26 @@ use std::fs;
 use chrono;
 use rug::{ops::Pow, Float};
 
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(4) as usize;
+
+//// PARAMS - START
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: i32 = 8;
+const INDEX: i32 = 11;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
+const CHAR_RANGE: std::ops::Range<u16> = 1..0x7FF;
+const PRECISION: u32 = 80;
+
+const HASH_FUNCTION: &str = "e**.1/";
+
 fn hash(store: Float, value: u32) -> Float {
-    return store / Float::with_val(200, value);
-    // return store.pow(0.12) * Float::with_val(200, value);
+    // return store / Float::with_val(PRECISION, value);
+    return store.pow(0.1) * Float::with_val(PRECISION, value);
 }
+
+//// PARAMS - end
 
 #[derive(Clone, PartialEq)]
 struct State {
@@ -50,7 +59,7 @@ impl Encoder {
         target_hex_pairs: Vec<String>,
         cache_size: usize,
     ) -> Self {
-        let possible_chars = (1..0xfff)
+        let possible_chars = CHAR_RANGE
             .filter_map(|char| {
                 let c = char as i32;
                 if is_valid_char(c) {
@@ -96,9 +105,8 @@ impl Encoder {
                     history: new_history,
                 };
 
-                if new_state.byte_count <= 510 {
+                if new_state.byte_count <= 510 { // too large
                     next_states.push(new_state);
-                    // next_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
                 }
 
                 // if next_states.len() > 10 {
@@ -167,6 +175,10 @@ impl Encoder {
     }
 }
 
+
+////// UTILS
+ 
+
 fn byte_size(string: &str) -> usize {
     string.len()
 }
@@ -182,27 +194,27 @@ fn is_valid_char(x: i32) -> bool {
 fn get_hex_digit(x: Float, d: usize) -> char {
     // get dth digit of x in base 16 
     let x = x.clone();
-    let d = Float::with_val(200, d);
+    let d = Float::with_val(PRECISION, d);
 
-    let mut shift = Float::with_val(200, 1.0);
-    let mut threshold = Float::with_val(200, 16.0);
+    let mut shift = Float::with_val(PRECISION, 1.0);
+    let mut threshold = Float::with_val(PRECISION, 16.0);
 
     while x >= threshold {
-        shift += Float::with_val(200, 1.0);
-        threshold *= Float::with_val(200, 16.0);
+        shift += Float::with_val(PRECISION, 1.0);
+        threshold *= Float::with_val(PRECISION, 16.0);
     }
 
     if d == shift {
         return 'z';
     } else if d < shift {
-        let digit = ((x.to_f32() as i32) >> (((shift - Float::with_val(200, 1.0) - d).to_f32() as i32) * Float::with_val(200, 4.0).to_f32() as i32)) & 15;
+        let digit = ((x.to_f32() as i32) >> (((shift - Float::with_val(PRECISION, 1.0) - d).to_f32() as i32) * Float::with_val(PRECISION, 4.0).to_f32() as i32)) & 15;
         return BASE_16[digit as usize] as char;
     } else {
-        let adj_x = x * Float::with_val(200, 16.0).pow((d - shift));
+        let adj_x = x * Float::with_val(PRECISION, 16.0).pow((d - shift));
         let ret = ((adj_x.to_f64() as usize) & 15) as usize;
 
 
-        if (ret == 0) && (adj_x%Float::with_val(200, 1.0) == Float::with_val(200, 0.0)) {
+        if (ret == 0) && (adj_x%Float::with_val(PRECISION, 1.0) == Float::with_val(PRECISION, 0.0)) {
             return 'z';
         } else {
             return BASE_16[ret as usize] as char;
@@ -246,18 +258,18 @@ fn main() {
     
     let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>();
 
-    let initial_state = State::new(Float::with_val(200, 2.0), 0, 0, vec![]);
+    let initial_state = State::new(Float::with_val(PRECISION, 2.0), 0, 0, vec![]);
     let mut encoder = Encoder::new(initial_state, target_hex, target_hex_pairs, MAX_CACHE_SIZE);
 
     if let Some(result) = encoder.encode() {
         println!("Encoding Complete:");
         println!("Encoded Sequence: {}", result.history.iter().collect::<String>());
         println!("Byte Count: {}", result.byte_count);
-        let timestamp = chrono::Utc::now().timestamp();
+        // let timestamp = chrono::Utc::now().timestamp();
         fs::write(
             format!("out/rs.txt"),
             format!(
-                "for(w=i=e=2;e+=e**.1*`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
+                "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
                 result.history.iter().collect::<String>(),
                 INDEX
             ),
