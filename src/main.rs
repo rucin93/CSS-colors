@@ -4,9 +4,9 @@ use rug::{ops::Pow, Float};
 
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(4) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: i32 = 11;
+const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -18,7 +18,7 @@ const HASH_FUNCTION: &str = "e**.1/";
 
 fn hash(store: Float, value: u32) -> Float {
     // return store / Float::with_val(PRECISION, value);
-    return store.pow(0.1) * Float::with_val(PRECISION, value);
+    return store.pow(0.1) / Float::with_val(PRECISION, value);
 }
 
 //// PARAMS - end
@@ -154,24 +154,16 @@ impl Encoder {
 
             self.prune_cache();
 
-            
-            // Check if we've reached the desired outcome
-            for state in &self.new_cache {
-                if state.current_pair_index >= self.target_hex_pairs.len() {
-                    completed = true;
-                    return Some(state.clone());
-                }
-            }
-
-            if counter > self.target_hex_pairs.len() {
-                break;
+            if counter >= self.target_hex_pairs.len() {
+                completed = true;
+                return Some(self.new_cache[0].clone());
             }
 
             self.old_cache = self.new_cache.clone();
             self.new_cache.clear();
         }
-
-        None
+        
+        None 
     }
 }
 
@@ -242,6 +234,11 @@ fn check_condition(
     if digit != pair[0] {
         return false;
     }
+
+    if pair.len() == 1 {
+        return true;
+    }
+
     digit = get_hex_digit(start.clone() + hash_values[0].clone() + hash_values[1].clone(), y.try_into().unwrap());
     if digit != pair[1] {
         return false;
@@ -251,7 +248,7 @@ fn check_condition(
 }
 
 fn main() {
-    // let target_hex = "0f8fffae".to_string();
+    // let target_hex = "f0f8fffaebd700".to_string();
     let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
     // reverse target_hex
     let target_hex = target_hex.chars().rev().collect::<String>();
