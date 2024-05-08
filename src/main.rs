@@ -1,40 +1,29 @@
 use std::fs;
 use chrono;
+use rug::{ops::Pow, Float};
 
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(4) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-fn hash(store: f64, value: u32) -> f64 {
-    store.powf(0.2) * (value as f64)
-}
-
-fn get_max_size(iterations: usize, percent: u32) -> usize {
-    let mut size = 1;
-    for _ in 0..iterations {
-        size *= 3;
-    }
-
-    if size > 508 {
-       return 508;
-    }
-
-    return (size * percent / 100) as usize;
+fn hash(store: Float, value: u32) -> Float {
+    return store / Float::with_val(200, value);
+    // return store.pow(0.12) * Float::with_val(200, value);
 }
 
 #[derive(Clone, PartialEq)]
 struct State {
-    start: f64,
+    start: Float,
     current_pair_index: usize,
     byte_count: usize,
     history: Vec<char>,
 }
 
 impl State {
-    fn new(start: f64, current_pair_index: usize, byte_count: usize, history: Vec<char>) -> Self {
+    fn new(start: Float, current_pair_index: usize, byte_count: usize, history: Vec<char>) -> Self {
         State {
             start,
             current_pair_index,
@@ -52,7 +41,6 @@ struct Encoder {
     old_cache: Vec<State>,
     new_cache: Vec<State>,
     possible_chars: Vec<char>,
-    max_sizes: Vec<usize>,
 }
 
 impl Encoder {
@@ -76,12 +64,6 @@ impl Encoder {
         let clone = initial_state.clone();
 
 
-        // max sizes for each iteration
-        let mut max_sizes = Vec::new();
-        for i in 0..target_hex_pairs.len() + 10 {
-            max_sizes.push(get_max_size(i, 90));
-        }
-
         Encoder {
             initial_state,
             target_hex,
@@ -90,7 +72,6 @@ impl Encoder {
             old_cache: vec![clone],
             new_cache: Vec::new(),
             possible_chars,
-            max_sizes,
         }
     }
 
@@ -98,13 +79,13 @@ impl Encoder {
         let mut next_states = Vec::with_capacity(MAX_CACHE_SIZE * 2);
         for char in &self.possible_chars {
             let current_pair = &self.target_hex_pairs[state.current_pair_index];
-            let current_hash = create_hash(state.start as f64, *char as u32, current_pair.len());
+            let current_hash = create_hash(state.start.clone() as Float, *char as u32, current_pair.len());
 
             let current_pair_string = String::from_utf8(current_pair.as_bytes().to_vec())
                 .expect("Failed to convert Vec<u8> to String");
 
-            if check_condition(state.start, &current_hash, &current_pair_string, INDEX as u32) {
-                let new_start = state.start + current_hash.iter().map(|x| *x as f64).sum::<f64>() as f64;
+            if check_condition(state.start.clone(), &current_hash, &current_pair_string, INDEX as u32) {
+                let new_start = state.start.clone() + current_hash[0].clone() + current_hash[1].clone();
                 let new_history = [state.history.clone(), vec![*char]].concat();
                 let new_byte_count = byte_size(&new_history.iter().collect::<String>());
 
@@ -115,7 +96,7 @@ impl Encoder {
                     history: new_history,
                 };
 
-                if new_state.byte_count <= self.max_sizes[new_state.current_pair_index] {
+                if new_state.byte_count <= 510 {
                     next_states.push(new_state);
                     // next_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
                 }
@@ -197,60 +178,63 @@ fn is_valid_char(x: i32) -> bool {
     }
 }
 
-fn get_hex_digit(x: f64, d: usize) -> char {
-    // get dth digit of x in base 16 
-    let x = x as f64;
-    let d = d as f64;
 
-    let mut shift = 1.0;
-    let mut threshold = 16.0;
-    
+fn get_hex_digit(x: Float, d: usize) -> char {
+    // get dth digit of x in base 16 
+    let x = x.clone();
+    let d = Float::with_val(200, d);
+
+    let mut shift = Float::with_val(200, 1.0);
+    let mut threshold = Float::with_val(200, 16.0);
 
     while x >= threshold {
-        shift += 1.0;
-        threshold *= 16.0;
+        shift += Float::with_val(200, 1.0);
+        threshold *= Float::with_val(200, 16.0);
     }
 
     if d == shift {
         return 'z';
     } else if d < shift {
-        let digit = ((x as u64) >> (((shift - 1.0 - d) * 4.0) as u64)) & 15;
+        let digit = ((x.to_f32() as i32) >> (((shift - Float::with_val(200, 1.0) - d).to_f32() as i32) * Float::with_val(200, 4.0).to_f32() as i32)) & 15;
         return BASE_16[digit as usize] as char;
     } else {
-        let adj_x = (x as f64) * 16f64.powf(d - shift );
-        let ret = (adj_x as u32 & 15) as usize;
+        let adj_x = x * Float::with_val(200, 16.0).pow((d - shift));
+        let ret = ((adj_x.to_f64() as usize) & 15) as usize;
 
-        if (ret == 0) && (adj_x % 1.0 == 0.0) {
+
+        if (ret == 0) && (adj_x%Float::with_val(200, 1.0) == Float::with_val(200, 0.0)) {
             return 'z';
         } else {
-            return BASE_16[ret] as char;
+            return BASE_16[ret as usize] as char;
         }
     }
 }
 
-fn create_hash(start: f64, x: u32, size: usize) -> Vec<f64> {
-    let mut hash_values = vec![hash(start, x)];
-    for i in 1..size {
-        let sum: f64 = hash_values.iter().copied().sum();
-        let new_hash = hash(start + sum, x);
-        hash_values.push(new_hash);
-    }
+fn create_hash(start: Float, x: u32, size: usize) -> Vec<Float> {
+    let start_copy = start.clone();
+    let mut hash_values: Vec<Float> = vec![hash(start_copy, x)];
+    
+    let new_hash = hash(start + hash_values[0].clone(), x);
+    hash_values.push(new_hash);
     hash_values
 }
 
 fn check_condition(
-    start: f64,
-    hash_values: &Vec<f64>,
+    start: Float,
+    hash_values: &Vec<Float>,
     pair: &String,
     y: u32
 ) -> bool {
-    for (i, expected) in pair.chars().enumerate() {
-        let sum: f64 = hash_values.iter().take(i + 1).sum();
-        let hex_digit = get_hex_digit(start + sum, y.try_into().unwrap());
-        if hex_digit != expected {
-            return false;
-        }
+    let pair = pair.chars().collect::<Vec<_>>(); 
+    let mut digit = get_hex_digit(start.clone() + hash_values[0].clone(), y.try_into().unwrap());
+    if digit != pair[0] {
+        return false;
     }
+    digit = get_hex_digit(start.clone() + hash_values[0].clone() + hash_values[1].clone(), y.try_into().unwrap());
+    if digit != pair[1] {
+        return false;
+    }
+
     true
 }
 
@@ -262,7 +246,7 @@ fn main() {
     
     let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>();
 
-    let initial_state = State::new(2.0, 0, 0, vec![]);
+    let initial_state = State::new(Float::with_val(200, 2.0), 0, 0, vec![]);
     let mut encoder = Encoder::new(initial_state, target_hex, target_hex_pairs, MAX_CACHE_SIZE);
 
     if let Some(result) = encoder.encode() {
@@ -271,9 +255,9 @@ fn main() {
         println!("Byte Count: {}", result.byte_count);
         let timestamp = chrono::Utc::now().timestamp();
         fs::write(
-            format!("{}.txt", timestamp),
+            format!("out/rs.txt"),
             format!(
-                "for(w=i=e=2;e+=e**.3*`-{}`.charCodeAt(i++/2);)w=[e.toString(16)[{}]]+w;for(c of a=arguments)print('#'+w.substr(a.map(d=>s+=d<c,s=0)|s*6,6))",
+                "for(w=i=e=2;e+=e**.1*`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
                 result.history.iter().collect::<String>(),
                 INDEX
             ),
