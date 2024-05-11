@@ -1,12 +1,13 @@
 use std::fs;
 use chrono;
 use rug::{ops::Pow, Float};
+use rayon::prelude::*;
 
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: i32 = 12;
+const INDEX: i32 = 9;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -43,9 +44,7 @@ impl State {
 }
 
 struct Encoder {
-    initial_state: State,
-    target_hex: String,
-    target_hex_pairs: Vec<String>,
+    target_hex_pairs: Vec<Vec<char>>,
     cache_size: usize,
     old_cache: Vec<State>,
     new_cache: Vec<State>,
@@ -55,8 +54,7 @@ struct Encoder {
 impl Encoder {
     fn new(
         initial_state: State,
-        target_hex: String,
-        target_hex_pairs: Vec<String>,
+        target_hex_pairs: Vec<Vec<char>>,
         cache_size: usize,
     ) -> Self {
         let possible_chars = CHAR_RANGE
@@ -73,8 +71,6 @@ impl Encoder {
         let clone = initial_state.clone();
 
         Encoder {
-            initial_state,
-            target_hex,
             target_hex_pairs,
             cache_size,
             old_cache: vec![clone],
@@ -84,44 +80,34 @@ impl Encoder {
     }
 
     fn generate_next_states(&self, state: &State) -> Vec<State> {
-        // create next_states vector with fixed length of possible_chars with no default value
-        let mut next_states = vec![State::new(Float::with_val(PRECISION, 0.0), 0, 0, vec![]); self.possible_chars.len()];
-        
-        let mut counter = 0;
-        for char in self.possible_chars.iter(){
-            let current_pair = &self.target_hex_pairs[state.current_pair_index];
-            let current_hash = create_hash(state.start.clone() as Float, *char as u32, current_pair.len());
-
-            let current_pair_string = String::from_utf8(current_pair.as_bytes().to_vec())
-                .expect("Failed to convert Vec<u8> to String");
-
-            if check_condition(state.start.clone(), &current_hash, &current_pair_string, INDEX as u32) {
-                let new_start = state.start.clone() + current_hash[0].clone() + current_hash[1].clone();
-                let new_history = [state.history.clone(), vec![*char]].concat();
+        let mut next_states = Vec::new();
+        let current_pair = &self.target_hex_pairs[state.current_pair_index];
+    
+        for &char in &self.possible_chars {
+            let current_hash = create_hash(state.start.clone(), char as u32);
+    
+            // Checking conditions before any heavy operations like cloning
+            if check_condition(state.start.clone(), &current_hash, &current_pair, INDEX as u32) {
+                // Only clone when necessary, reducing clone operations
+                let new_start = state.start.clone() + &current_hash[0] + &current_hash[1];
+                let mut new_history = state.history.clone(); // Clone once, then modify
+                new_history.push(char);
                 let new_byte_count = byte_size(&new_history.iter().collect::<String>());
-
-                let new_state = State {
-                    start: new_start,
-                    current_pair_index: state.current_pair_index + 1,
-                    byte_count: new_byte_count,
-                    history: new_history,
-                };
-
-                // only add when byte count is less than 510 - prune too big strings from output
-                if new_state.byte_count < 510 { 
-                    next_states[counter] = new_state;
-                    counter += 1;
+    
+                if new_byte_count < 510 { 
+                    next_states.push(State::new(
+                        new_start,
+                        state.current_pair_index + 1,
+                        new_byte_count,
+                        new_history,
+                    ));
                 }
-
-                // if next_states.len() > 10 {
-                //     next_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
-                //     return next_states;
-                // }
             }
         }
-
+    
         next_states
     }
+    
 
     fn prune_cache(&mut self) {
         if self.new_cache.len() > self.cache_size {
@@ -137,7 +123,6 @@ impl Encoder {
         let mut completed = false;
         let mut counter = 0;
         while !completed {
-            use rayon::prelude::*;
 
             self.new_cache = self.old_cache.par_iter().flat_map(|state| {
                 self.generate_next_states(state)
@@ -152,9 +137,8 @@ impl Encoder {
                 completed = true;
                 return Some(self.new_cache.clone());
             }
-
-            self.old_cache = self.new_cache.clone();
-            self.new_cache.clear();
+            self.old_cache.clear();
+            std::mem::swap(&mut self.old_cache, &mut self.new_cache);
         }
         
         None 
@@ -214,7 +198,7 @@ fn get_hex_digit(x: Float, d: usize) -> char {
 }
 
 // create two hash values for each pair to check if the condition is satisfied
-fn create_hash(start: Float, x: u32, size: usize) -> Vec<Float> {
+fn create_hash(start: Float, x: u32) -> Vec<Float> {
     let h1 = hash(start.clone(), x);
     let new_hash = hash(start + h1.clone(), x);
     return vec![h1, new_hash];
@@ -223,10 +207,9 @@ fn create_hash(start: Float, x: u32, size: usize) -> Vec<Float> {
 fn check_condition(
     start: Float,
     hash_values: &Vec<Float>,
-    pair: &String,
+    pair: &&Vec<char>,
     y: u32
 ) -> bool {
-    let pair = pair.chars().collect::<Vec<_>>(); 
     let mut digit = get_hex_digit(start.clone() + hash_values[0].clone(), y.try_into().unwrap());
     if digit != pair[0] {
         return false;
@@ -246,15 +229,16 @@ fn check_condition(
 }
 
 fn main() {
-    // let target_hex = "0f8fffae".to_string();
-    let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
+    let target_hex = "0f8fffae".to_string();
+    // let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
     // reverse target_hex
     let target_hex = target_hex.chars().rev().collect::<String>();
     
-    let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>();
+    // split target_hex into pairs of 2 characters which can be indexed 0 and 1
+    let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|pair| pair.to_vec()).collect::<Vec<_>>();
 
     let initial_state = State::new(Float::with_val(PRECISION, 2.0), 0, 0, vec![]);
-    let mut encoder = Encoder::new(initial_state, target_hex, target_hex_pairs, MAX_CACHE_SIZE);
+    let mut encoder = Encoder::new(initial_state, target_hex_pairs, MAX_CACHE_SIZE);
 
     if let Some(result) = encoder.encode() {
         println!("Encoding Complete:");
