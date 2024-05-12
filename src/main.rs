@@ -1,13 +1,11 @@
 use std::fs;
 use chrono;
 use rug::{ops::Pow, Float};
-use rayon::prelude::*;
-
 
 //// PARAMS - START
 const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: i32 = 9;
+const INDEX: i32 = 12;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -30,15 +28,17 @@ struct State {
     current_pair_index: usize,
     byte_count: usize,
     history: Vec<char>,
+    last_char: char,
 }
 
 impl State {
-    fn new(start: Float, current_pair_index: usize, byte_count: usize, history: Vec<char>) -> Self {
+    fn new(start: Float, current_pair_index: usize, byte_count: usize, history: Vec<char>, last_char: char) -> Self {
         State {
             start,
             current_pair_index,
             byte_count,
             history,
+            last_char,
         }
     }
 }
@@ -49,6 +49,7 @@ struct Encoder {
     old_cache: Vec<State>,
     new_cache: Vec<State>,
     possible_chars: Vec<char>,
+    char_groups: Vec< Vec<char>>,
 }
 
 impl Encoder {
@@ -68,22 +69,57 @@ impl Encoder {
             })
             .collect::<Vec<_>>();
 
-        let clone = initial_state.clone();
+        // create char_groups containing possible_chars grouped by their byte size 
+        // groups should be defined like that: 
+        // group 1: all characters
+        // group 2: characters with byte size 1 and 2
+        // group 3: characters with byte size 1
+
+        let mut char_groups = Vec::new();
+        let mut group1 = Vec::new();
+        let mut group2 = Vec::new();
+        let mut group3 = Vec::new();
+            
+        for &ch in &possible_chars {
+            let byte_size = ch.len_utf8();
+    
+            // Add to group 1 (all characters)
+            group1.push(ch);
+    
+            // Add to group 2 (byte size 1 and 2)
+            if byte_size == 1 || byte_size == 2 {
+                group2.push(ch);
+            }
+    
+            // Add to group 3 (byte size 1)
+            if byte_size == 1 {
+                group3.push(ch);
+            }
+        }
+        
+        char_groups.push(group1);
+        char_groups.push(group2);
+        char_groups.push(group3);
+    
 
         Encoder {
             target_hex_pairs,
             cache_size,
-            old_cache: vec![clone],
+            old_cache: vec![initial_state],
             new_cache: Vec::new(),
             possible_chars,
+            char_groups,
         }
     }
 
-    fn generate_next_states(&self, state: &State) -> Vec<State> {
+    fn generate_next_states(&self, state: &State, index: usize, cache_size: usize) -> Vec<State> {
         let mut next_states = Vec::new();
         let current_pair = &self.target_hex_pairs[state.current_pair_index];
-    
-        for &char in &self.possible_chars {
+        
+        // pick group basing on interation - first 33% is group 1, next 33% is group 2, last 33% is group 3
+
+
+        for &char in self.char_groups[get_group(index, cache_size, state.clone()) as usize].iter() {
             let current_hash = create_hash(state.start.clone(), char as u32);
     
             // Checking conditions before any heavy operations like cloning
@@ -100,6 +136,7 @@ impl Encoder {
                         state.current_pair_index + 1,
                         new_byte_count,
                         new_history,
+                        char
                     ));
                 }
             }
@@ -122,21 +159,24 @@ impl Encoder {
     fn encode(&mut self) -> Option<Vec<State>> {
         let mut completed = false;
         let mut counter = 0;
-        while !completed {
+        use rayon::prelude::*;
 
-            self.new_cache = self.old_cache.par_iter().flat_map(|state| {
-                self.generate_next_states(state)
-            }).filter(|state| state.byte_count > 0).collect();
+        while !completed {
+            let cache_size = self.old_cache.len();
+            self.new_cache = self.old_cache.par_iter().enumerate().flat_map(|(index, state)| {
+                self.generate_next_states(state, index, cache_size) // Pass index to generate_next_states
+            }).collect();
 
             counter += 1;
             println!("{} {} of {} - {}", chrono::Utc::now().format("%d/%m/%Y %H:%M:%S"), counter, self.target_hex_pairs.len(), self.new_cache.len());
-
-            self.prune_cache();
 
             if counter == self.target_hex_pairs.len() {
                 completed = true;
                 return Some(self.new_cache.clone());
             }
+
+            self.prune_cache();
+
             self.old_cache.clear();
             std::mem::swap(&mut self.old_cache, &mut self.new_cache);
         }
@@ -228,16 +268,38 @@ fn check_condition(
     true
 }
 
+fn get_group(index: usize, total: usize, state: State) -> u32 {
+
+    let max_byte_count = state.current_pair_index * 3;
+    // let (first_limit, second_limit) = match total % 3 {
+    //     0 => (total / 3, 2 * total / 3),
+    //     1 => (total / 3 + 1, 2 * total / 3 + 1),
+    //     _ => (total / 3 + 1, 2 * total / 3 + 2),
+    // };
+
+    let (first_limit, second_limit) = (max_byte_count / 5, 3 * max_byte_count / 5);
+
+    if index < 4 {
+        return 0;
+    }
+
+    match state.byte_count {
+        i if i < first_limit => 0,
+        i if i < second_limit => 1,
+        _ => 2,
+    }
+}
+
 fn main() {
-    let target_hex = "0f8fffae".to_string();
-    // let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
+    // let target_hex = "0f8fffaebd".to_string();
+    let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
     // reverse target_hex
     let target_hex = target_hex.chars().rev().collect::<String>();
     
     // split target_hex into pairs of 2 characters which can be indexed 0 and 1
     let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|pair| pair.to_vec()).collect::<Vec<_>>();
 
-    let initial_state = State::new(Float::with_val(PRECISION, 2.0), 0, 0, vec![]);
+    let initial_state = State::new(Float::with_val(PRECISION, 2.0), 0, 0, vec![], ' ');
     let mut encoder = Encoder::new(initial_state, target_hex_pairs, MAX_CACHE_SIZE);
 
     if let Some(result) = encoder.encode() {
