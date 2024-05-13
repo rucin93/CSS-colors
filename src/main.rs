@@ -1,26 +1,59 @@
-use std::fs;
+use std::{fs};
 use chrono;
 use rug::{ops::Pow, Float};
+use std::sync::Mutex;
+// use lazy_static::lazy_static;
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(3) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: i32 = 12;
+const INDEX: i32 = 8;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-const CHAR_RANGE: std::ops::Range<u16> = 1..0x7FF;
+const CHAR_RANGE: std::ops::Range<u32> = 1..0x7FF;
 const PRECISION: u32 = 100;
 
-const HASH_FUNCTION: &str = "e**.1*";
+const HASH_FUNCTION: &str = "e/";
 
 fn hash(store: Float, value: u32) -> Float {
     // return store / Float::with_val(PRECISION, value);
-    return store.pow(0.1) * Float::with_val(PRECISION, value);
+    return store / Float::with_val(PRECISION, value);
 }
 
 //// PARAMS - end
+
+struct Cache {
+    size: Mutex<usize>,
+    max_size: usize,
+}
+
+impl Cache {
+    fn new(max_size: usize) -> Cache {
+        Cache {
+            size: Mutex::new(0),
+            max_size,
+        }
+    }
+
+    fn add(&self, size: usize) -> Result<(), &'static str> {
+        let mut current_size = self.size.lock().unwrap();
+        if *current_size + size > self.max_size {
+            Err("Cache size limit reached")
+        } else {
+            *current_size += size;
+            Ok(())
+        }
+    }
+
+    fn prune(&self) {
+        let mut current_size = self.size.lock().unwrap();
+        *current_size = 0;
+    }
+
+// Add other methods like `get` as needed
+}
 
 #[derive(Clone, PartialEq)]
 struct State {
@@ -48,7 +81,6 @@ struct Encoder {
     cache_size: usize,
     old_cache: Vec<State>,
     new_cache: Vec<State>,
-    possible_chars: Vec<char>,
     char_groups: Vec< Vec<char>>,
 }
 
@@ -107,30 +139,30 @@ impl Encoder {
             cache_size,
             old_cache: vec![initial_state],
             new_cache: Vec::new(),
-            possible_chars,
             char_groups,
         }
     }
 
-    fn generate_next_states(&self, state: &State, index: usize, cache_size: usize) -> Vec<State> {
+    fn generate_next_states(&self, state: &State, index: usize, best_size: usize) -> Vec<State> {
         let mut next_states = Vec::new();
         let current_pair = &self.target_hex_pairs[state.current_pair_index];
-        
-        // pick group basing on interation - first 33% is group 1, next 33% is group 2, last 33% is group 3
+        if state.byte_count - best_size >= 2 {
+            return next_states;
+        }
 
-
-        for &char in self.char_groups[get_group(index, cache_size, state.clone()) as usize].iter() {
+        for &char in self.char_groups[state.byte_count - best_size].iter() {
             let current_hash = create_hash(state.start.clone(), char as u32);
-    
+            let clone = current_hash.clone();
             // Checking conditions before any heavy operations like cloning
-            if check_condition(state.start.clone(), &current_hash, &current_pair, INDEX as u32) {
+            if check_condition(state.start.clone(), current_hash, &current_pair, INDEX as u32) {
                 // Only clone when necessary, reducing clone operations
-                let new_start = state.start.clone() + &current_hash[0] + &current_hash[1];
+                
+                let new_start = state.start.clone() + clone.0 + clone.1;
                 let mut new_history = state.history.clone(); // Clone once, then modify
                 new_history.push(char);
                 let new_byte_count = byte_size(&new_history.iter().collect::<String>());
     
-                if new_byte_count < 510 { 
+                // if new_byte_count < 510 { 
                     next_states.push(State::new(
                         new_start,
                         state.current_pair_index + 1,
@@ -138,14 +170,18 @@ impl Encoder {
                         new_history,
                         char
                     ));
-                }
+                // }
+            }
+
+            // check if self.new_cache is full
+            if next_states.len() >= MAX_CACHE_SIZE/8 {
+                return next_states;
             }
         }
     
         next_states
     }
     
-
     fn prune_cache(&mut self) {
         if self.new_cache.len() > self.cache_size {
             // println!("Pruning cache");
@@ -161,10 +197,14 @@ impl Encoder {
         let mut counter = 0;
         use rayon::prelude::*;
 
+
         while !completed {
-            let cache_size = self.old_cache.len();
+            let mut sorted_states: Vec<_> = self.old_cache.iter().cloned().collect();
+            sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
+            let best_size = sorted_states[0].byte_count;
+
             self.new_cache = self.old_cache.par_iter().enumerate().flat_map(|(index, state)| {
-                self.generate_next_states(state, index, cache_size) // Pass index to generate_next_states
+                self.generate_next_states(state, index, best_size) // Pass index to generate_next_states
             }).collect();
 
             counter += 1;
@@ -176,6 +216,8 @@ impl Encoder {
             }
 
             self.prune_cache();
+
+            println!("Current best byte count: {}", self.new_cache[0].byte_count);
 
             self.old_cache.clear();
             std::mem::swap(&mut self.old_cache, &mut self.new_cache);
@@ -238,19 +280,19 @@ fn get_hex_digit(x: Float, d: usize) -> char {
 }
 
 // create two hash values for each pair to check if the condition is satisfied
-fn create_hash(start: Float, x: u32) -> Vec<Float> {
+fn create_hash(start: Float, x: u32) -> (Float, Float){
     let h1 = hash(start.clone(), x);
     let new_hash = hash(start + h1.clone(), x);
-    return vec![h1, new_hash];
+    return (h1, new_hash);
 }
 
 fn check_condition(
     start: Float,
-    hash_values: &Vec<Float>,
+    hash_values: (Float, Float),
     pair: &&Vec<char>,
     y: u32
 ) -> bool {
-    let mut digit = get_hex_digit(start.clone() + hash_values[0].clone(), y.try_into().unwrap());
+    let mut digit = get_hex_digit(start.clone() + hash_values.0.clone(), y.try_into().unwrap());
     if digit != pair[0] {
         return false;
     }
@@ -260,7 +302,7 @@ fn check_condition(
         return true;
     }
 
-    digit = get_hex_digit(start.clone() + hash_values[0].clone() + hash_values[1].clone(), y.try_into().unwrap());
+    digit = get_hex_digit(start.clone() + hash_values.0.clone() + hash_values.1.clone(), y.try_into().unwrap());
     if digit != pair[1] {
         return false;
     }
@@ -292,7 +334,7 @@ fn get_group(index: usize, total: usize, state: State) -> u32 {
 
 fn main() {
     // let target_hex = "0f8fffaebd".to_string();
-    let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd3".to_string();
+    let target_hex = "f0f8fffaebd700ffff7fffd4f0fffff5f5dcffe4c4000000ffebcd0000ff8a2be2a52a2adeb8875f9ea07fff00d2691eff7f506495edfff8dcdc143c00ffff00008b008b8bb8860ba9a9a9006400a9a9a9bdb76b8b008b556b2fff8c009932cc8b0000e9967a8fbc8f483d8b2f4f4f2f4f4f00ced19400d3ff149300bfff6969696969691e90ffb22222fffaf0228b22ff00ffdcdcdcf8f8ffffd700daa520808080008000adff2f808080f0fff0ff69b4cd5c5c4b0082fffff0f0e68ce6e6fafff0f57cfc00fffacdadd8e6f08080e0fffffafad2d3d3d390ee90d3d3d3ffb6c1ffa07a20b2aa87cefa778899778899b0c4deffffe000ff0032cd32faf0e6ff00ff80000066cdaa0000cdba55d39370db3cb3717b68ee00fa9a48d1ccc71585191970f5fffaffe4e1ffe4b5ffdead000080fdf5e68080006b8e23ffa500ff4500da70d6eee8aa98fb98afeeeedb7093ffefd5ffdab9cd853fffc0cbdda0ddb0e0e6800080663399ff0000bc8f8f4169e18b4513fa8072f4a4602e8b57fff5eea0522dc0c0c087ceeb6a5acd708090708090fffafa00ff7f4682b4d2b48c008080d8bfd8ff634740e0d0ee82eef5deb3fffffff5f5f5ffff009acd32".to_string();
     // reverse target_hex
     let target_hex = target_hex.chars().rev().collect::<String>();
     
