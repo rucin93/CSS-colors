@@ -5,9 +5,9 @@ use std::sync::Mutex;
 // use lazy_static::lazy_static;
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: i32 = 13;
+const INDEX: std::ops::Range<u32> = 7..13;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -15,7 +15,7 @@ const BASE_16: &[char; 16] = &[
 const CHAR_RANGE: std::ops::Range<u32> = 1..0x7FF;
 // const PRECISION: u32 = 100;
 
-const HASH_FUNCTION: &str = "e/i/";
+const HASH_FUNCTION: &str = "e/";
 
 fn hash(store: f64, value: u32, index: u32) -> f64 {
     // return store / Float::with_val(PRECISION, value);
@@ -87,6 +87,7 @@ struct Encoder {
     old_cache: Vec<State>,
     new_cache: Vec<State>,
     char_groups: Vec< Vec<char>>,
+    index: u32,
 }
 
 impl Encoder {
@@ -94,6 +95,7 @@ impl Encoder {
         initial_state: State,
         target_hex_pairs: Vec<Vec<char>>,
         cache_size: usize,
+        index: u32,
     ) -> Self {
         let possible_chars = CHAR_RANGE
             .filter_map(|char| {
@@ -147,6 +149,7 @@ impl Encoder {
             old_cache: vec![initial_state],
             new_cache: Vec::new(),
             char_groups,
+            index
         }
     }
 
@@ -161,7 +164,7 @@ impl Encoder {
             let current_hash = create_hash(state.start.clone(), char as u32, index as u32);
             let clone = current_hash.clone();
             // Checking conditions before any heavy operations like cloning
-            if check_condition(state.start.clone(), current_hash, &current_pair, INDEX as u32) {
+            if check_condition(state.start.clone(), current_hash, &current_pair, self.index as u32) {
                 // Only clone when necessary, reducing clone operations
                 
                 let new_start = state.start.clone() + clone.0 + clone.1;
@@ -206,6 +209,9 @@ impl Encoder {
 
 
         while !completed {
+            if self.old_cache.is_empty() {
+                return None;
+            }
             let mut sorted_states: Vec<_> = self.old_cache.iter().cloned().collect();
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
             let best_size = sorted_states[0].byte_count;
@@ -224,7 +230,7 @@ impl Encoder {
 
             self.prune_cache();
 
-            println!("Current best byte count: {}", self.new_cache[0].byte_count);
+            // println!("Current best byte count: {}", self.new_cache[0].byte_count);
 
             self.old_cache.clear();
             std::mem::swap(&mut self.old_cache, &mut self.new_cache);
@@ -327,30 +333,39 @@ fn main() {
     let target_hex_pairs = target_hex.chars().collect::<Vec<_>>().chunks(2).map(|pair| pair.to_vec()).collect::<Vec<_>>();
 
     let initial_state = State::new(2.0, 0, 0, vec![], ' ');
-    let mut encoder = Encoder::new(initial_state, target_hex_pairs, MAX_CACHE_SIZE);
 
-    if let Some(result) = encoder.encode() {
-        println!("Encoding Complete:");
-        // group result by byte count
-        let mut result = result.into_iter().collect::<Vec<_>>();
-        result.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
-        // write to file first 15 results
-        let result = result.into_iter().take(15).collect::<Vec<_>>();
+    // for INDEX from 8 to 13 try encoding and save best result for each INDEX
+    let mut RESULT = Vec::new();
+    for i in INDEX {
+        println!("INDEX: {}", i);
+        let mut encoder = Encoder::new(initial_state.clone(), target_hex_pairs.clone(), MAX_CACHE_SIZE, i);
+        if let Some(result) = encoder.encode() {
+            println!("Encoding Complete:");
+            // group result by byte count
+            let mut result = result.into_iter().collect::<Vec<_>>();
+            result.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
+            // write to file first 15 results
+            let result = result.into_iter().take(1).collect::<Vec<_>>();
 
-        for (i, r) in result.iter().enumerate() {
-            // println!("Encoded Sequence {}: {}", i, r.history.iter().collect::<String>());
-            println!("Byte Count {}: {}", i, r.byte_count);
-            fs::write(
-                format!("out/rs_{}.txt", i),
-                format!(
-                    "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
-                    r.history.iter().collect::<String>(),
-                    INDEX
-                ),
-            )
-            .expect("Failed to write to file");
+            RESULT.push((i, result[0].clone()));
+
+            
+        } else {
+            println!("No valid encoding found.");
         }
-    } else {
-        println!("No valid encoding found.");
+    }
+
+    for (i, (index, r)) in RESULT.iter().enumerate() {
+        // println!("Encoded Sequence {}: {}", i, r.history.iter().collect::<String>());
+        println!("Byte Count {}: {}", i, r.byte_count);
+        fs::write(
+            format!("out/rs_{}_{}.txt", i, i),
+            format!(
+                "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
+                r.history.iter().collect::<String>(),
+                index
+            ),
+        )
+        .expect("Failed to write to file");
     }
 }
