@@ -22,6 +22,11 @@ fn hash(store: f64, value: u32, index: u32) -> f64 {
     return store / value as f64 ;
 }
 
+fn modifier(start: f64, hash: f64) -> f64 {
+    return start + hash; // for e+=
+    // return hash; // for e=
+}
+
 //// PARAMS - end
 
 struct Cache {
@@ -156,7 +161,7 @@ impl Encoder {
     fn generate_next_states(&self, state: &State, index: usize, best_size: usize) -> Vec<State> {
         let mut next_states = Vec::new();
         let current_pair = &self.target_hex_pairs[state.current_pair_index];
-        if state.byte_count - best_size >= 2 {
+        if state.byte_count - best_size >= 3 {
             return next_states;
         }
 
@@ -167,7 +172,7 @@ impl Encoder {
             if check_condition(state.start.clone(), current_hash, &current_pair, self.index as u32) {
                 // Only clone when necessary, reducing clone operations
                 
-                let new_start = state.start.clone() + clone.0 + clone.1;
+                let new_start = modifier(state.start.clone() + clone.0, clone.1);
                 let mut new_history = state.history.clone(); // Clone once, then modify
                 new_history.push(char);
                 let new_byte_count = byte_size(&new_history.iter().collect::<String>());
@@ -295,7 +300,7 @@ fn get_hex_digit(x: f64, d: usize) -> char {
 // create two hash values for each pair to check if the condition is satisfied
 fn create_hash(start: f64, x: u32, index: u32) -> (f64, f64){
     let h1 = hash(start.clone(), x, index);
-    let new_hash = hash(start + h1.clone(), x, index);
+    let new_hash = hash(modifier(start, h1.clone()), x, index);
     return (h1, new_hash);
 }
 
@@ -305,7 +310,7 @@ fn check_condition(
     pair: &&Vec<char>,
     y: u32
 ) -> bool {
-    let mut digit = get_hex_digit(start.clone() + hash_values.0.clone(), y.try_into().unwrap());
+    let mut digit = get_hex_digit(modifier(start.clone(), hash_values.0.clone()), y.try_into().unwrap());
     if digit != pair[0] {
         return false;
     }
@@ -315,7 +320,7 @@ fn check_condition(
         return true;
     }
 
-    digit = get_hex_digit(start.clone() + hash_values.0.clone() + hash_values.1.clone(), y.try_into().unwrap());
+    digit = get_hex_digit(modifier(start.clone() + hash_values.0.clone(), hash_values.1.clone()), y.try_into().unwrap());
     if digit != pair[1] {
         return false;
     }
@@ -359,7 +364,7 @@ fn main() {
         // println!("Encoded Sequence {}: {}", i, r.history.iter().collect::<String>());
         println!("Byte Count {}: {}", i, r.byte_count);
         fs::write(
-            format!("out/rs_{}_{}.txt", i, i),
+            format!("out/rs_{}.txt", index),
             format!(
                 "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
                 r.history.iter().collect::<String>(),
