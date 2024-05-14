@@ -1,4 +1,4 @@
-use std::{fs};
+use std::fs;
 use chrono;
 // use rug::{ops::Pow, Float};
 use std::sync::{Mutex, Arc};
@@ -7,13 +7,13 @@ use std::sync::{Mutex, Arc};
 //// PARAMS - START
 const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: std::ops::Range<u32> = 8..14;
+const INDEX: std::ops::Range<u32> = 10..14;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-const CHAR_RANGE: std::ops::Range<u32> = 1..0x8888;
-// const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
+// const CHAR_RANGE: std::ops::Range<u32> = 1..0x1111;
+const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
 // const PRECISION: u32 = 100;
 
 const HASH_FUNCTION: &str = "e/";
@@ -125,8 +125,6 @@ impl Encoder {
             let clone = current_hash.clone();
             // Checking conditions before any heavy operations like cloning
             if check_condition(state.start.clone(), current_hash, &current_pair, self.index as u32) {
-                // Only clone when necessary, reducing clone operations
-                
                 let new_start = modifier(state.start.clone() + clone.0, clone.1);
                 let mut new_history = state.history.clone(); // Clone once, then modify
                 new_history.push(char);
@@ -154,20 +152,16 @@ impl Encoder {
     }
     
     fn prune_cache(&mut self) {
-        if self.new_cache.len() > self.cache_size {
-            // println!("Pruning cache");
-            let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
-            sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
+        let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
+        sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
 
-            self.new_cache = sorted_states.into_iter().take(self.cache_size).collect();
-        }
+        self.new_cache = sorted_states.into_iter().take(self.cache_size).collect();
     }
 
     fn encode(&mut self) -> Option<Vec<State>> {
         let mut completed = false;
         let mut counter = 0;
         use rayon::prelude::*;
-
 
         while !completed {
             if self.old_cache.is_empty() {
@@ -177,7 +171,7 @@ impl Encoder {
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
             let best_size = sorted_states[0].byte_count;
             let arc_counter = Arc::new(Mutex::new(0));
-            self.new_cache = self.old_cache.par_iter().enumerate().flat_map(|(index, state)| {
+            self.new_cache = self.old_cache.par_iter().flat_map(|state| {
                 self.generate_next_states(state, counter + 2, best_size, Arc::clone(&arc_counter)) // Pass index to generate_next_states
             }).collect();
 
@@ -305,7 +299,7 @@ fn main() {
     let initial_state = State::new(2.0, 0, 0, vec![]);
 
     // for INDEX from 8 to 13 try encoding and save best result for each INDEX
-    let mut RESULT = Vec::new();
+    let mut results_map = Vec::new();
     for i in INDEX {
         println!("INDEX: {}", i);
         let mut encoder = Encoder::new(initial_state.clone(), target_hex_pairs.clone(), MAX_CACHE_SIZE, i);
@@ -317,7 +311,24 @@ fn main() {
             // write to file first 15 results
             let result = result.into_iter().take(1).collect::<Vec<_>>();
 
-            RESULT.push((i, result[0].clone()));
+            results_map.push((i, result[0].clone()));
+
+            let clone = result[0].clone();
+
+            let mut result = String::new();
+            for &ch in clone.history.iter() {
+                result.push(std::char::from_u32(ch).unwrap());
+            }
+
+            fs::write(
+                format!("out/rs_{}.txt", i),
+                format!(
+                    "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
+                    result,
+                    i
+                ),
+            )
+            .expect("Failed to write to file");
 
             
         } else {
@@ -325,24 +336,8 @@ fn main() {
         }
     }
 
-    for (i, (index, r)) in RESULT.iter().enumerate() {
+    for (index, r) in results_map.iter() {
         // println!("Encoded Sequence {}: {}", i, r.history.iter().collect::<String>());
         println!("Byte Count {}: {}", index, r.byte_count);
-
-        // parse r.history to string - it contains u32 values - we need to convert them to utf-8 characters
-        let mut result = String::new();
-        for &ch in r.history.iter() {
-            result.push(std::char::from_u32(ch).unwrap());
-        }
-
-        fs::write(
-            format!("out/rs_{}.txt", index),
-            format!(
-                "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
-                result,
-                index
-            ),
-        )
-        .expect("Failed to write to file");
     }
 }
