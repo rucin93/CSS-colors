@@ -1,4 +1,4 @@
-use std::{fs};
+use std::fs;
 use chrono;
 // use rug::{ops::Pow, Float};
 // use std::sync::Mutex;
