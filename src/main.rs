@@ -1,5 +1,6 @@
 use std::fs;
 use chrono;
+use rayon::prelude::*;
 // use rug::{ops::Pow, Float};
 use std::sync::{Mutex, Arc};
 // use lazy_static::lazy_static;
@@ -161,7 +162,6 @@ impl Encoder {
     fn encode(&mut self) -> Option<Vec<State>> {
         let mut completed = false;
         let mut counter = 0;
-        use rayon::prelude::*;
 
         while !completed {
             if self.old_cache.is_empty() {
