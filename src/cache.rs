@@ -1,19 +1,19 @@
 use std::{fs};
 use chrono;
 // use rug::{ops::Pow, Float};
-use std::sync::{Mutex, Arc};
-// use lazy_static::lazy_static;
+use std::sync::Mutex;
+use std::sync::{Arc};
+use lazy_static::lazy_static;
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 const INDEX: std::ops::Range<u32> = 8..14;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-const CHAR_RANGE: std::ops::Range<u32> = 1..0x8888;
-// const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
+const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
 // const PRECISION: u32 = 100;
 
 const HASH_FUNCTION: &str = "e/";
@@ -28,6 +28,60 @@ fn modifier(start: f64, hash: f64) -> f64 {
 }
 
 //// PARAMS - end
+
+struct Cache {
+    states: Mutex<Vec<State>>,
+    max_size: usize,
+    current_size: Mutex<usize>,
+}
+
+impl Cache {
+    fn new(max_size: usize) -> Cache {
+        Cache {
+            max_size,
+            current_size: Mutex::new(1),
+            states: Mutex::new(Vec::new()),
+        }
+    }
+
+    // add new state to cache
+    fn add(&self, state: State) {
+        let mut current_size = self.current_size.lock().unwrap();
+        if *current_size < self.max_size {
+            *current_size += 1;
+
+            let mut states = self.states.lock().unwrap();
+            states.push(state);
+        }
+    }
+
+    // get all states from cache
+    fn get(&self) -> Vec<State> {
+        let states = self.states.lock().unwrap();
+        states.clone()
+    }
+
+    // prune cache to max_size
+    fn prune(&self) {
+        let mut states = self.states.lock().unwrap();
+        states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
+        states.truncate(MAX_CACHE_SIZE);
+    }
+
+    fn clear(&self) {
+        let mut states = self.states.lock().unwrap();
+        states.clear();
+    }
+
+    fn size(&self) -> usize {
+        let size = self.states.lock().unwrap().len();
+        size
+    }
+}
+
+lazy_static! {
+    static ref CACHE: Arc<Cache> = Arc::new(Cache::new(MAX_CACHE_SIZE));
+}
 
 #[derive(Clone, PartialEq)]
 struct State {
@@ -76,6 +130,12 @@ impl Encoder {
             })
             .collect::<Vec<_>>();
 
+        // create char_groups containing possible_chars grouped by their byte size 
+        // groups should be defined like that: 
+        // group 1: all characters
+        // group 2: characters with byte size 1 and 2
+        // group 3: characters with byte size 1
+
         let mut char_groups = Vec::new();
         let mut group1 = Vec::new();
         let mut group2 = Vec::new();
@@ -113,11 +173,11 @@ impl Encoder {
         }
     }
 
-    fn generate_next_states(&self, state: &State, index: usize, best_size: usize, current_size: Arc<Mutex<u32>>) -> Vec<State> {
-        let mut next_states = Vec::new();
+    fn generate_next_states(&self, state: &State, index: usize, best_size: usize) -> Vec<State> {
+        let mut buffer = Vec::new();
         let current_pair = &self.target_hex_pairs[state.current_pair_index];
         if state.byte_count - best_size >= 3 {
-            return next_states;
+            return CACHE.get();
         }
 
         for &char in self.char_groups[state.byte_count - best_size].iter() {
@@ -131,70 +191,65 @@ impl Encoder {
                 let mut new_history = state.history.clone(); // Clone once, then modify
                 new_history.push(char);
                 let new_byte_count = &state.byte_count + byte_size(&char);
-                let mut current_size = current_size.lock().unwrap();
-
-                if *current_size < MAX_CACHE_SIZE as u32 {
-                    next_states.push(State::new(
+    
+                // if new_byte_count < 510 { 
+                    buffer.push(State::new(
                         new_start,
                         state.current_pair_index + 1,
                         new_byte_count,
                         new_history,
                     ));
-
-                    *current_size += 1;
-                }
-
-                if *current_size >= MAX_CACHE_SIZE as u32 {
-                    return next_states
-                }
+                    
+                // }
+            }
+            // check if self.new_cache is full
+            if CACHE.size() >= MAX_CACHE_SIZE {
+                break ;
             }
         }
-    
-        next_states
-    }
-    
-    fn prune_cache(&mut self) {
-        if self.new_cache.len() > self.cache_size {
-            // println!("Pruning cache");
-            let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
-            sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
 
-            self.new_cache = sorted_states.into_iter().take(self.cache_size).collect();
+        for item in buffer.into_iter() {
+            CACHE.add(item);
         }
+    
+        CACHE.get()
     }
+
 
     fn encode(&mut self) -> Option<Vec<State>> {
         let mut completed = false;
         let mut counter = 0;
-        use rayon::prelude::*;
 
+        use rayon::prelude::*;
 
         while !completed {
             if self.old_cache.is_empty() {
                 return None;
             }
+
             let mut sorted_states: Vec<_> = self.old_cache.iter().cloned().collect();
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
             let best_size = sorted_states[0].byte_count;
-            let arc_counter = Arc::new(Mutex::new(0));
+
             self.new_cache = self.old_cache.par_iter().enumerate().flat_map(|(index, state)| {
-                self.generate_next_states(state, counter + 2, best_size, Arc::clone(&arc_counter)) // Pass index to generate_next_states
+                // pass Arc cache to generate_next_states
+                self.generate_next_states(state, index, best_size)
             }).collect();
 
             counter += 1;
-            println!("{} {} of {} - {} Best Size: {}", chrono::Utc::now().format("%d/%m/%Y %H:%M:%S"), counter, self.target_hex_pairs.len(), self.new_cache.len(), best_size);
+            println!("{} {} of {} - {}", chrono::Utc::now().format("%d/%m/%Y %H:%M:%S"), counter, self.target_hex_pairs.len(), CACHE.size());
 
             if counter == self.target_hex_pairs.len() {
-                completed = true;
-                return Some(self.new_cache.clone());
+                return Some(CACHE.get());
             }
 
-            self.prune_cache();
+            CACHE.prune();
 
             // println!("Current best byte count: {}", self.new_cache[0].byte_count);
 
             self.old_cache.clear();
-            std::mem::swap(&mut self.old_cache, &mut self.new_cache);
+            std::mem::swap(&mut self.old_cache, &mut CACHE.get());
+            CACHE.clear();
         }
         
         None 
@@ -334,6 +389,7 @@ fn main() {
         for &ch in r.history.iter() {
             result.push(std::char::from_u32(ch).unwrap());
         }
+
 
         fs::write(
             format!("out/rs_{}.txt", index),

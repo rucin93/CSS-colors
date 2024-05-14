@@ -1,19 +1,18 @@
 use std::{fs};
 use chrono;
 // use rug::{ops::Pow, Float};
-use std::sync::{Mutex, Arc};
+// use std::sync::Mutex;
 // use lazy_static::lazy_static;
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: std::ops::Range<u32> = 8..14;
+const INDEX: std::ops::Range<u32> = 9..14;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-const CHAR_RANGE: std::ops::Range<u32> = 1..0x8888;
-// const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
+const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
 // const PRECISION: u32 = 100;
 
 const HASH_FUNCTION: &str = "e/";
@@ -113,7 +112,7 @@ impl Encoder {
         }
     }
 
-    fn generate_next_states(&self, state: &State, index: usize, best_size: usize, current_size: Arc<Mutex<u32>>) -> Vec<State> {
+    fn generate_next_states(&self, state: &State, index: usize, best_size: usize) -> Vec<State> {
         let mut next_states = Vec::new();
         let current_pair = &self.target_hex_pairs[state.current_pair_index];
         if state.byte_count - best_size >= 3 {
@@ -131,21 +130,14 @@ impl Encoder {
                 let mut new_history = state.history.clone(); // Clone once, then modify
                 new_history.push(char);
                 let new_byte_count = &state.byte_count + byte_size(&char);
-                let mut current_size = current_size.lock().unwrap();
-
-                if *current_size < MAX_CACHE_SIZE as u32 {
+    
+                if next_states.len() < MAX_CACHE_SIZE / 80 {
                     next_states.push(State::new(
                         new_start,
                         state.current_pair_index + 1,
                         new_byte_count,
                         new_history,
                     ));
-
-                    *current_size += 1;
-                }
-
-                if *current_size >= MAX_CACHE_SIZE as u32 {
-                    return next_states
                 }
             }
         }
@@ -176,9 +168,9 @@ impl Encoder {
             let mut sorted_states: Vec<_> = self.old_cache.iter().cloned().collect();
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
             let best_size = sorted_states[0].byte_count;
-            let arc_counter = Arc::new(Mutex::new(0));
+
             self.new_cache = self.old_cache.par_iter().enumerate().flat_map(|(index, state)| {
-                self.generate_next_states(state, counter + 2, best_size, Arc::clone(&arc_counter)) // Pass index to generate_next_states
+                self.generate_next_states(state, counter + 2, best_size) // Pass index to generate_next_states
             }).collect();
 
             counter += 1;
@@ -327,13 +319,14 @@ fn main() {
 
     for (i, (index, r)) in RESULT.iter().enumerate() {
         // println!("Encoded Sequence {}: {}", i, r.history.iter().collect::<String>());
-        println!("Byte Count {}: {}", index, r.byte_count);
+        println!("Byte Count {}: {}", i, r.byte_count);
 
         // parse r.history to string - it contains u32 values - we need to convert them to utf-8 characters
         let mut result = String::new();
         for &ch in r.history.iter() {
             result.push(std::char::from_u32(ch).unwrap());
         }
+
 
         fs::write(
             format!("out/rs_{}.txt", index),
