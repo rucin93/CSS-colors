@@ -1,14 +1,12 @@
 use std::fs;
 use chrono;
 use rayon::prelude::*;
-// use rug::{ops::Pow, Float};
 use std::sync::{Mutex, Arc};
-// use lazy_static::lazy_static;
 
 //// PARAMS - START
 const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: std::ops::Range<u32> = 1..14;
+const INDEX: std::ops::Range<u32> = 12..14;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -83,6 +81,16 @@ impl Encoder {
             
         for &ch in &possible_chars {
             let byte_size = byte_size(&ch);
+            let mut ch = ch;
+            
+            // deal with invalid utf-8 characters            
+            if ch > 0xD800 && ch < 0xDFFF {
+                continue;
+            }
+
+            if ch == 0xDFFF || ch == 0xD800 {
+                ch = 0xFFFD;
+            }
     
             // Add to group 1 (all characters)
             group1.push(ch);
@@ -199,12 +207,21 @@ impl Encoder {
 ////// UTILS
  
 fn byte_size(char_code: &u32) -> usize {
+    // if char_code == &0xFFFD { // because we've used 0xFF
+    //     return 1;
+    // }
+
     let mut length = 1;
     let code = *char_code as i32;
     if code > 0x7F && code <= 0x7FF {
         length += 1;
     } else if code > 0x7FF && code <= 0xFFFF {
         length += 2;
+    }
+
+    // handle invalid utf-8 chars
+    if code >= 0xD800 && code <= 0xDFFF {
+        length = 3;
     }
 
     length
@@ -217,6 +234,7 @@ fn is_valid_char(x: i32) -> bool {
     // 92 - \
     // 96 - `
     // 127 - delete
+    return true;
     match x {
         13 | 92 | 96 | 127 => false,
         // 13 | 36 | 92 | 96 | 127 => false,
