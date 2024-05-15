@@ -82,7 +82,7 @@ impl Encoder {
         for &ch in &possible_chars {
             let byte_size = byte_size(&ch);
             let mut ch = ch;
-            
+
             // deal with invalid utf-8 characters            
             if ch > 0xD800 && ch < 0xDFFF {
                 continue;
@@ -234,9 +234,8 @@ fn is_valid_char(x: i32) -> bool {
     // 92 - \
     // 96 - `
     // 127 - delete
-    return true;
     match x {
-        13 | 92 | 96 | 127 => false,
+        92 | 96 | 127 => false,
         // 13 | 36 | 92 | 96 | 127 => false,
         _ => true,
     }
