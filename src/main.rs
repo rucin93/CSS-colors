@@ -8,7 +8,7 @@ use std::sync::{Mutex, Arc};
 //// PARAMS - START
 const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: std::ops::Range<u32> = 10..14;
+const INDEX: std::ops::Range<u32> = 1..14;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -17,9 +17,10 @@ const BASE_16: &[char; 16] = &[
 const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
 // const PRECISION: u32 = 100;
 
-const HASH_FUNCTION: &str = "e/";
+const HASH_FUNCTION: &str = "e+=e/";
 
 fn hash(store: f64, value: u32, index: u32) -> f64 {
+    // return store.powf(0.1) * value as f64 ;
     return store / value as f64 ;
 }
 
@@ -51,7 +52,6 @@ impl State {
 
 struct Encoder {
     target_hex_pairs: Vec<Vec<char>>,
-    cache_size: usize,
     old_cache: Vec<State>,
     new_cache: Vec<State>,
     char_groups: Vec< Vec<u32>>,
@@ -62,7 +62,6 @@ impl Encoder {
     fn new(
         initial_state: State,
         target_hex_pairs: Vec<Vec<char>>,
-        cache_size: usize,
         index: u32,
     ) -> Self {
         let possible_chars = CHAR_RANGE
@@ -106,7 +105,6 @@ impl Encoder {
     
         Encoder {
             target_hex_pairs,
-            cache_size,
             old_cache: vec![initial_state],
             new_cache: Vec::new(),
             char_groups,
@@ -152,28 +150,30 @@ impl Encoder {
         next_states
     }
     
-    fn prune_cache(&mut self) {
-        let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
-        sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
+    // fn prune_cache(&mut self) {
+    //     let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
+    //     sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
 
-        self.new_cache = sorted_states.into_iter().take(self.cache_size).collect();
-    }
+    //     self.new_cache = sorted_states.into_iter().take(MAX_CACHE_SIZE).collect();
+    // }
 
     fn encode(&mut self) -> Option<Vec<State>> {
         let mut completed = false;
         let mut counter = 0;
 
         while !completed {
-            if self.old_cache.is_empty() {
-                return None;
-            }
             let mut sorted_states: Vec<_> = self.old_cache.iter().cloned().collect();
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
             let best_size = sorted_states[0].byte_count;
+            self.old_cache = sorted_states;
             let arc_counter = Arc::new(Mutex::new(0));
             self.new_cache = self.old_cache.par_iter().flat_map(|state| {
                 self.generate_next_states(state, counter + 2, best_size, Arc::clone(&arc_counter)) // Pass index to generate_next_states
             }).collect();
+
+            if self.new_cache.len() == 0 {
+                return None;
+            }
 
             counter += 1;
             println!("{} {} of {} - {} Best Size: {}", chrono::Utc::now().format("%d/%m/%Y %H:%M:%S"), counter, self.target_hex_pairs.len(), self.new_cache.len(), best_size);
@@ -183,7 +183,7 @@ impl Encoder {
                 return Some(self.new_cache.clone());
             }
 
-            self.prune_cache();
+            // self.prune_cache();
 
             // println!("Current best byte count: {}", self.new_cache[0].byte_count);
 
@@ -244,7 +244,7 @@ fn get_hex_digit(x: f64, d: usize) -> char {
         let digit = ((x as i64) >> (((shift - 1.0 - d) as i64) * 4.0 as i64)) & 15;
         return BASE_16[digit as usize] as char;
     } else {
-        let adj_x = x * (16.0_f64).powf((d - shift));
+        let adj_x = x * (16.0_f64).powf(d - shift);
         let ret = ((adj_x as usize) & 15) as usize;
 
 
@@ -302,9 +302,9 @@ fn main() {
     let mut results_map = Vec::new();
     for i in INDEX {
         println!("INDEX: {}", i);
-        let mut encoder = Encoder::new(initial_state.clone(), target_hex_pairs.clone(), MAX_CACHE_SIZE, i);
+        let mut encoder = Encoder::new(initial_state.clone(), target_hex_pairs.clone(), i);
         if let Some(result) = encoder.encode() {
-            println!("Encoding Complete:");
+            println!("Encoding Complete for index: {i}");
             // group result by byte count
             let mut result = result.into_iter().collect::<Vec<_>>();
             result.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
@@ -323,7 +323,7 @@ fn main() {
             fs::write(
                 format!("out/rs_{}.txt", i),
                 format!(
-                    "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
+                    "for(w=i=e=2;{HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
                     result,
                     i
                 ),
@@ -332,7 +332,7 @@ fn main() {
 
             
         } else {
-            println!("No valid encoding found.");
+            println!("No valid encoding found for index {i}");
         }
     }
 
