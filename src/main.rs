@@ -1,12 +1,14 @@
 use std::fs;
 use chrono;
 use rayon::prelude::*;
+// use rug::{ops::Pow, Float};
 use std::sync::{Mutex, Arc};
+// use lazy_static::lazy_static;
 
 //// PARAMS - START
-const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(5) as usize;
+const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(7) as usize;
 // const MAX_CACHE_SIZE: usize = 16 * 10i32.pow(6) as usize;
-const INDEX: std::ops::Range<u32> = 12..14;
+const INDEX: std::ops::Range<u32> = 12..13;
 const BASE_16: &[char; 16] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
@@ -15,10 +17,9 @@ const BASE_16: &[char; 16] = &[
 const CHAR_RANGE: std::ops::Range<u32> = 1..0xFFFF;
 // const PRECISION: u32 = 100;
 
-const HASH_FUNCTION: &str = "e+=e/";
+const HASH_FUNCTION: &str = "e/";
 
 fn hash(store: f64, value: u32, index: u32) -> f64 {
-    // return store.powf(0.1) * value as f64 ;
     return store / value as f64 ;
 }
 
@@ -81,16 +82,6 @@ impl Encoder {
             
         for &ch in &possible_chars {
             let byte_size = byte_size(&ch);
-            let mut ch = ch;
-
-            // deal with invalid utf-8 characters            
-            if ch > 0xD800 && ch < 0xDFFF {
-                continue;
-            }
-
-            if ch == 0xDFFF || ch == 0xD800 {
-                ch = 0xFFFD;
-            }
     
             // Add to group 1 (all characters)
             group1.push(ch);
@@ -138,7 +129,7 @@ impl Encoder {
                 let new_byte_count = &state.byte_count + byte_size(&char);
                 let mut current_size = current_size.lock().unwrap();
 
-                if *current_size < MAX_CACHE_SIZE as u32 {
+                if *current_size <= MAX_CACHE_SIZE as u32 {
                     next_states.push(State::new(
                         new_start,
                         state.current_pair_index + 1,
@@ -149,7 +140,7 @@ impl Encoder {
                     *current_size += 1;
                 }
 
-                if *current_size >= MAX_CACHE_SIZE as u32 {
+                if *current_size > MAX_CACHE_SIZE as u32 {
                     return next_states
                 }
             }
@@ -158,30 +149,28 @@ impl Encoder {
         next_states
     }
     
-    // fn prune_cache(&mut self) {
-    //     let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
-    //     sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
+    fn prune_cache(&mut self) {
+        let mut sorted_states: Vec<_> = self.new_cache.iter().cloned().collect();
+        sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
 
-    //     self.new_cache = sorted_states.into_iter().take(MAX_CACHE_SIZE).collect();
-    // }
+        self.new_cache = sorted_states.into_iter().take(MAX_CACHE_SIZE).collect();
+    }
 
     fn encode(&mut self) -> Option<Vec<State>> {
         let mut completed = false;
         let mut counter = 0;
 
         while !completed {
+            if self.old_cache.is_empty() {
+                return None;
+            }
             let mut sorted_states: Vec<_> = self.old_cache.iter().cloned().collect();
             sorted_states.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
             let best_size = sorted_states[0].byte_count;
-            self.old_cache = sorted_states;
             let arc_counter = Arc::new(Mutex::new(0));
             self.new_cache = self.old_cache.par_iter().flat_map(|state| {
                 self.generate_next_states(state, counter + 2, best_size, Arc::clone(&arc_counter)) // Pass index to generate_next_states
             }).collect();
-
-            if self.new_cache.len() == 0 {
-                return None;
-            }
 
             counter += 1;
             println!("{} {} of {} - {} Best Size: {}", chrono::Utc::now().format("%d/%m/%Y %H:%M:%S"), counter, self.target_hex_pairs.len(), self.new_cache.len(), best_size);
@@ -207,21 +196,12 @@ impl Encoder {
 ////// UTILS
  
 fn byte_size(char_code: &u32) -> usize {
-    // if char_code == &0xFFFD { // because we've used 0xFF
-    //     return 1;
-    // }
-
     let mut length = 1;
     let code = *char_code as i32;
     if code > 0x7F && code <= 0x7FF {
         length += 1;
     } else if code > 0x7FF && code <= 0xFFFF {
         length += 2;
-    }
-
-    // handle invalid utf-8 chars
-    if code >= 0xD800 && code <= 0xDFFF {
-        length = 3;
     }
 
     length
@@ -235,7 +215,7 @@ fn is_valid_char(x: i32) -> bool {
     // 96 - `
     // 127 - delete
     match x {
-        92 | 96 | 127 => false,
+        13 | 92 | 96 | 127 => false,
         // 13 | 36 | 92 | 96 | 127 => false,
         _ => true,
     }
@@ -261,7 +241,7 @@ fn get_hex_digit(x: f64, d: usize) -> char {
         let digit = ((x as i64) >> (((shift - 1.0 - d) as i64) * 4.0 as i64)) & 15;
         return BASE_16[digit as usize] as char;
     } else {
-        let adj_x = x * (16.0_f64).powf(d - shift);
+        let adj_x = x * (16.0_f64).powf((d - shift));
         let ret = ((adj_x as usize) & 15) as usize;
 
 
@@ -321,7 +301,7 @@ fn main() {
         println!("INDEX: {}", i);
         let mut encoder = Encoder::new(initial_state.clone(), target_hex_pairs.clone(), i);
         if let Some(result) = encoder.encode() {
-            println!("Encoding Complete for index: {i}");
+            println!("Encoding Complete:");
             // group result by byte count
             let mut result = result.into_iter().collect::<Vec<_>>();
             result.sort_by(|a, b| a.byte_count.cmp(&b.byte_count));
@@ -340,7 +320,7 @@ fn main() {
             fs::write(
                 format!("out/rs_{}.txt", i),
                 format!(
-                    "for(w=i=e=2;{HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
+                    "for(w=i=e=2;e+={HASH_FUNCTION}`-{}`.charCodeAt(i++/2);)w=e.toString(16)[{}]+w",
                     result,
                     i
                 ),
@@ -349,7 +329,7 @@ fn main() {
 
             
         } else {
-            println!("No valid encoding found for index {i}");
+            println!("No valid encoding found.");
         }
     }
 
