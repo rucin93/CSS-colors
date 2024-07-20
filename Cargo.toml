@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 rayon = "1.5.1"
-chrono = "0.4.19"
+chrono = "0.4.38"
 # rug = "1.24.1"
 # rand="0.8.1"
 # lazy_static = "1.4.0"
