@@ -45,5 +45,5 @@ for(w=i=e=2;e=e*9.1/`-ǉp%?*`.charCodeAt(i++/2);)w=e.toString(16)[12]+w // 0f8ff
 ```
 
 # DISCLAIMER
-I'm not an author of this idea. Following encoder with any tips is coming from Luke's blog: https://www.luke-g.com/sigbovik-golf-horse/ so any credits goes for Luke :) 
+This code is fully inspired by Luke's blog: https://www.luke-g.com/sigbovik-golf-horse/
 
